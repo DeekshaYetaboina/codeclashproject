@@ -6,8 +6,7 @@ import { languages } from "@/components/LanguageSelector";
 import GameMap from "@/components/GameMap";
 
 export default function LanguageDashboardPage({ params }) {
-  const unwrappedParams = use(params);
-  const langId = unwrappedParams.langId;
+  const langId = params.langId;
   const router = useRouter();
   const [user, setUser] = useState(null);
   const [selectedLanguage, setSelectedLanguage] = useState(null);

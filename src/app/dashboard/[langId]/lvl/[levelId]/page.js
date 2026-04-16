@@ -9,8 +9,7 @@ import BattlePipeline from '@/components/games/BattlePipeline';
 import SublevelDashboard from '@/components/games/SublevelDashboard';
 
 export default function PlayPage({ params }) {
-  const unwrappedParams = use(params);
-  const { langId, levelId } = unwrappedParams;
+  const { langId, levelId } = params;
   const router = useRouter();
   
   const [user, setUser] = useState(null);

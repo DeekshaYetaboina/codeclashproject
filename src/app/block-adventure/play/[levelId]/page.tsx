@@ -14,11 +14,9 @@ import { BlockProgrammingEditor } from '@/components/BlockProgramming/BlockProgr
 
 const PhaserEngine = dynamic(() => import('../../GameEngine'), { ssr: false });
 
-export default function PlayLevelPage({ params }: { params: Promise<{ levelId: string }> }) {
+export default function PlayLevelPage({ params }: { params: { levelId: string } }) {
     const router = useRouter();
-    const resolvedParams = React.use(params);
-
-    const initialLevelId = parseInt(resolvedParams.levelId, 10);
+    const initialLevelId = parseInt(params.levelId, 10);
     const initialLevelIndex = ALL_BLOCK_LEVELS.findIndex(l => l.id === initialLevelId);
 
     if (initialLevelIndex === -1) return notFound();
