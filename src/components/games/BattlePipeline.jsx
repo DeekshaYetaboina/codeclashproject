@@ -1,0 +1,516 @@
+"use client";
+import React, { useEffect, useRef, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  ChevronRight, CheckCircle2, Skull,
+  Zap, AlertTriangle, ArrowLeft, Crosshair, Terminal,
+  Bug, Eye, Code2, BookOpen, Shield
+} from 'lucide-react';
+import dynamic from 'next/dynamic';
+
+// Arena is loaded dynamically to prevent SSR issues
+const BattleArena = dynamic(() => import('./BattleArena'), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-full bg-[#020b10] flex items-center justify-center">
+      <p className="text-brand-neon/30 text-xs font-mono uppercase tracking-widest animate-pulse">LOADING ARENA...</p>
+    </div>
+  )
+});
+
+export default function BattlePipeline({ pipelineData, langLabel, onComplete, onBack }) {
+  const [phase, setPhase]         = useState('concept_card');
+  const [cardIdx, setCardIdx]     = useState(0);
+  const [mcqIdx, setMcqIdx]       = useState(0);
+  const [mcqResult, setMcqResult] = useState(null);
+  const [mcqCorrect, setMcqCorrect] = useState(0);
+  const [codeIdx, setCodeIdx]     = useState(0);
+  const [codeAnswer, setCodeAnswer] = useState('');
+  const [codeResult, setCodeResult] = useState(null);
+  const [codeHintShown, setCodeHintShown] = useState(false);
+  const [codeAttempts, setCodeAttempts] = useState(0);
+  const [debugIdx, setDebugIdx]   = useState(0);
+  const [debugResult, setDebugResult] = useState(null);
+  const [oracleIdx, setOracleIdx] = useState(0);
+  const [oracleResult, setOracleResult] = useState(null);
+
+  const maxEnemyHp = pipelineData.battle?.enemy?.maxHp || 100;
+  const [enemyHp, setEnemyHp]     = useState(maxEnemyHp);
+  const [playerHp, setPlayerHp]   = useState(100);
+  const [combatAction, setCombatAction] = useState(null);
+  const [combatLog, setCombatLog] = useState(['BATTLE INITIALIZED...']);
+  const [weakAreas, setWeakAreas] = useState([]);
+
+  const logCombat = (msg) => setCombatLog(prev => [msg, ...prev].slice(0, 6));
+  const hitEnemy  = (dmg) => { setEnemyHp(p => Math.max(0, p - dmg)); setCombatAction({ type: 'player_attack', id: Date.now() }); };
+  const hitPlayer = (dmg) => { setPlayerHp(p => Math.max(0, p - dmg)); setCombatAction({ type: 'enemy_attack',  id: Date.now() }); };
+
+  const cards   = pipelineData.teaching  || [];
+  const mcqs    = pipelineData.battle?.mcq || [];
+  const codings = pipelineData.coding    || [];
+  const debugs  = pipelineData.debugging || [];
+  const oracles = pipelineData.prediction|| [];
+
+  // ── HP Bar ────────────────────────────────────────────────────────────
+  const renderHP = (cur, max, isPlayer, name) => {
+    const pct = Math.max(0, (cur / max) * 100);
+    const barColor = isPlayer
+      ? (pct > 40 ? 'bg-brand-neon shadow-[0_0_10px_rgba(0,255,204,0.5)]' : 'bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]')
+      : (pct > 40 ? 'bg-orange-400 shadow-[0_0_10px_rgba(251,146,60,0.4)]' : 'bg-red-600');
+    return (
+      <div className="w-full">
+        <div className="flex justify-between text-[9px] font-black uppercase tracking-widest mb-1">
+          <span className={isPlayer ? 'text-brand-neon' : 'text-orange-400'}>{isPlayer ? '⚔ PLAYER' : `👾 ${name || 'BOSS'}`}</span>
+          <span className="text-white/40">{Math.round(cur)}/{max}</span>
+        </div>
+        <div className="h-3.5 w-full bg-black/60 border border-white/10 rounded-full overflow-hidden relative">
+          <motion.div animate={{ width: `${pct}%` }} transition={{ duration: 0.4 }}
+            className={`h-full rounded-full ${barColor} transition-colors duration-300`} />
+        </div>
+      </div>
+    );
+  };
+
+  // ── COMBAT LAYOUT (shared for MCQ, Coding, Debug, Oracle phases) ──────
+  const CombatLayout = ({ phaseName, phaseIcon: Icon, accentClass, children }) => {
+    const isCombat = ['battle_mcq','coding_lab','debug_mission','oracle_test'].includes(phase);
+    return (
+      <div className="h-screen flex flex-col bg-[#020408] overflow-hidden">
+
+        {/* ── ROW 1: TOP HUD ── */}
+        <div className="flex-none flex items-center justify-between gap-3 px-4 py-3 bg-black/60 backdrop-blur-sm border-b border-white/5 z-20">
+          <button onClick={onBack} className="p-2 bg-white/5 border border-white/10 rounded-xl hover:border-white/30 transition-all">
+            <ArrowLeft className="w-4 h-4 text-white/50" />
+          </button>
+
+          {/* Player HP */}
+          <div className="flex-1 max-w-[200px]">
+            {renderHP(playerHp, 100, true)}
+          </div>
+
+          {/* Phase badge */}
+          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-[9px] font-black uppercase tracking-[0.2em] ${accentClass} animate-pulse flex-none`}>
+            <Icon className="w-3.5 h-3.5" /> {phaseName}
+          </div>
+
+          {/* Enemy HP */}
+          <div className="flex-1 max-w-[200px]">
+            {renderHP(enemyHp, maxEnemyHp, false, pipelineData.battle?.enemy?.name)}
+          </div>
+
+          {/* Score */}
+          <div className="text-[9px] font-mono text-white/20 text-right flex-none">
+            <div className="text-brand-neon font-black">{mcqCorrect}/{mcqs.length}</div>
+            <div>HITS</div>
+          </div>
+        </div>
+
+        {/* ── ROW 2: BATTLE ARENA (fixed height) ── */}
+        <div className="flex-none relative" style={{ height: '300px' }}>
+          <BattleArena actionTrigger={combatAction} arenaHeight={300} />
+        </div>
+
+        {/* ── ROW 3: DIVIDER ── */}
+        <div className="flex-none h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+
+        {/* ── ROW 4: INTERACTIVE PANEL ── */}
+        <div className="flex-1 overflow-y-auto flex flex-col lg:flex-row gap-3 p-4 min-h-0">
+          {/* Question area */}
+          <div className="flex-1 min-w-0">
+            {children}
+          </div>
+
+          {/* Combat Console */}
+          <div className="flex-none w-full lg:w-56 bg-black/70 border border-white/10 rounded-2xl p-3 h-40 lg:h-auto overflow-hidden flex flex-col font-mono text-[8px] tracking-widest uppercase">
+            <div className="mb-2 text-white/20 border-b border-white/5 pb-1 font-black text-[8px] flex items-center gap-1.5">
+              <div className="flex gap-1"><div className="w-1.5 h-1.5 rounded-full bg-red-500/60"/><div className="w-1.5 h-1.5 rounded-full bg-yellow-500/60"/><div className="w-1.5 h-1.5 rounded-full bg-green-500/60"/></div>
+              CONSOLE
+            </div>
+            <div className="space-y-1 flex-1 overflow-hidden">
+              {combatLog.map((log, i) => (
+                <motion.div key={i} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }}
+                  className={`leading-tight ${i === 0 ? 'text-brand-neon font-bold' : 'text-white/25'}`}>
+                  {'>'} {log}
+                </motion.div>
+              ))}
+            </div>
+            <div className="flex items-center gap-1.5 border-t border-white/5 pt-1.5 mt-1.5">
+              <div className="w-1.5 h-1.5 rounded-full bg-brand-neon animate-pulse" />
+              <span className="text-brand-neon/50 text-[7px]">STABLE</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ════════════════════════════════════════════════════════════════════════
+  // 🟣 PHASE 1 — CONCEPT CARD
+  // ════════════════════════════════════════════════════════════════════════
+  if (phase === 'concept_card') {
+    const card = cards[cardIdx];
+    if (!card) { setPhase('battle_mcq'); return null; }
+    const isLast = cardIdx + 1 >= cards.length;
+
+    const phaseSteps = ['📖 Learn', '⚔️ Battle', '💻 Code', '🐛 Debug', '🔮 Predict'];
+
+    return (
+      <div className="h-screen flex flex-col bg-[#020610] text-white overflow-hidden">
+        {/* Nav */}
+        <div className="flex-none flex justify-between items-center px-6 py-4 border-b border-white/5">
+          <button onClick={onBack} className="p-2 bg-white/5 border border-white/10 rounded-xl hover:border-brand-neon transition-all">
+            <ArrowLeft className="w-4 h-4" />
+          </button>
+          <div className="flex items-center gap-2">
+            {phaseSteps.map((s, i) => (
+              <div key={i} className={`flex flex-col items-center gap-1`}>
+                <div className={`h-1.5 rounded-full transition-all ${i === 0 ? 'w-8 bg-brand-neon' : 'w-4 bg-white/10'}`} />
+                <span className="text-[7px] text-white/20 hidden md:block">{s}</span>
+              </div>
+            ))}
+          </div>
+          <span className="text-[10px] font-black text-white/20">{cardIdx + 1}/{cards.length}</span>
+        </div>
+
+        {/* Card */}
+        <div className="flex-1 overflow-y-auto p-6 flex items-start justify-center">
+          <motion.div key={cardIdx} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+            className="w-full max-w-2xl bg-black/70 border border-white/10 rounded-[32px] p-8 shadow-2xl">
+
+            <div className="flex items-center gap-3 mb-5">
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-brand-neon/10 border border-brand-neon/30 text-brand-neon text-[9px] font-black uppercase tracking-[0.3em]">
+                <BookOpen className="w-3 h-3" /> CONCEPT BRIEFING
+              </div>
+              {card.emoji && <span className="text-3xl">{card.emoji}</span>}
+            </div>
+
+            <h2 className="text-2xl md:text-3xl font-black uppercase italic tracking-tighter mb-4 leading-tight">{card.title}</h2>
+
+            {card.analogy && (
+              <div className="bg-brand-neon/5 border border-brand-neon/20 rounded-xl p-4 mb-5">
+                <p className="text-brand-neon text-xs font-bold mb-1">🎯 Think of it like this:</p>
+                <p className="text-white/70 text-sm">{card.analogy}</p>
+              </div>
+            )}
+
+            <p className="text-white/80 text-base leading-relaxed mb-5">{card.content}</p>
+
+            {card.examples?.map((ex, i) => (
+              <div key={i} className="bg-white/5 border border-white/10 p-4 rounded-xl mb-3">
+                <p className="text-brand-neon text-xs font-black mb-1 flex items-center gap-2"><Zap className="w-3 h-3" />{ex.title}</p>
+                <p className="text-white/50 text-xs mb-2">{ex.explanation}</p>
+                <pre className="bg-black/70 p-3 rounded-lg text-xs font-mono text-brand-neon/70 overflow-x-auto border border-white/5 whitespace-pre-wrap">{ex.code}</pre>
+              </div>
+            ))}
+
+            {card.funFact && (
+              <div className="bg-yellow-500/5 border border-yellow-500/20 rounded-xl p-4 mb-6">
+                <p className="text-yellow-400 text-sm">💡 <strong>Fun Fact:</strong> {card.funFact}</p>
+              </div>
+            )}
+
+            <button onClick={() => isLast ? setPhase('battle_mcq') : setCardIdx(c => c + 1)}
+              className="w-full py-4 bg-brand-neon text-black font-black text-sm uppercase tracking-widest rounded-xl hover:scale-[1.02] active:scale-95 transition-all shadow-[0_0_20px_rgba(0,255,204,0.3)] flex items-center justify-center gap-2">
+              {isLast ? '⚔️ ENTER COMBAT' : 'GOT IT →'}
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </motion.div>
+        </div>
+      </div>
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // 🟡 PHASE 2 — BATTLE MCQ
+  // ════════════════════════════════════════════════════════════════════════
+  if (phase === 'battle_mcq') {
+    if (mcqs.length === 0) { setPhase('coding_lab'); return null; }
+    const q = mcqs[mcqIdx];
+    const dmg = Math.round(maxEnemyHp / mcqs.length);
+
+    const handleMcq = (idx) => {
+      if (mcqResult) return;
+      if (idx === q.a) {
+        setMcqResult('correct'); setMcqCorrect(c => c + 1);
+        hitEnemy(dmg);
+        logCombat(`⚔️ CRITICAL HIT! ${dmg} DMG DEALT`);
+      } else {
+        setMcqResult('wrong');
+        hitPlayer(10);
+        if (q.topic && !weakAreas.includes(q.topic)) setWeakAreas(p => [...p, q.topic]);
+        logCombat(`💥 ENEMY COUNTERS! -10 HP`);
+      }
+      setTimeout(() => {
+        setMcqResult(null);
+        const next = mcqIdx + 1;
+        next < mcqs.length
+          ? setMcqIdx(next)
+          : setPhase(codings.length ? 'coding_lab' : debugs.length ? 'debug_mission' : oracles.length ? 'oracle_test' : 'results');
+      }, 1300);
+    };
+
+    return (
+      <CombatLayout phaseName="Tactical Combat" phaseIcon={Crosshair} accentClass="border-brand-orange/30 bg-brand-orange/10 text-brand-orange">
+        <motion.div key={mcqIdx} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+          className="bg-black/80 border border-white/10 rounded-2xl p-5 relative overflow-hidden h-full">
+          {/* Progress bar */}
+          <div className="absolute top-0 left-0 w-full h-1 bg-white/5">
+            <motion.div className="h-full bg-brand-orange" animate={{ width: `${(mcqIdx / mcqs.length) * 100}%` }} />
+          </div>
+          <div className="flex justify-between items-center mb-4 pt-2">
+            <span className="text-[9px] font-black text-white/30 uppercase tracking-widest">Q{mcqIdx + 1} of {mcqs.length}</span>
+            <AnimatePresence>
+              {mcqResult && (
+                <motion.span initial={{ scale: 0.7, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ opacity: 0 }}
+                  className={`text-[9px] font-black px-3 py-1 rounded-full border uppercase ${
+                    mcqResult === 'correct' ? 'text-brand-success border-brand-success/30 bg-brand-success/10'
+                    : 'text-red-400 border-red-400/30 bg-red-400/10'}`}>
+                  {mcqResult === 'correct' ? '✅ CORRECT!' : '❌ WRONG!'}
+                </motion.span>
+              )}
+            </AnimatePresence>
+          </div>
+          <h3 className="text-lg font-black mb-4 leading-snug uppercase italic">{q?.q}</h3>
+          {mcqResult === 'wrong' && q?.explanation && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mb-3 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-xl text-yellow-300 text-xs">
+              💡 {q.explanation}
+            </motion.div>
+          )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {q?.options.map((opt, i) => (
+              <button key={i} onClick={() => handleMcq(i)} disabled={!!mcqResult}
+                className={`text-left py-3.5 px-4 rounded-xl border text-sm transition-all active:scale-95 font-semibold ${
+                  mcqResult === 'correct' && i === q.a ? 'bg-brand-success/20 border-brand-success text-brand-success'
+                  : mcqResult === 'wrong'   && i === q.a ? 'bg-brand-success/10 border-brand-success/40 text-brand-success/70'
+                  : mcqResult ? 'opacity-40 border-white/5 cursor-not-allowed text-white/30'
+                  : 'bg-white/5 border-white/10 hover:border-brand-orange hover:bg-brand-orange/10 text-white/80'
+                }`}>
+                <span className="text-[9px] font-black opacity-30 mr-2">{String.fromCharCode(65 + i)}.</span>{opt}
+              </button>
+            ))}
+          </div>
+        </motion.div>
+      </CombatLayout>
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // 🔵 PHASE 3 — CODING LAB
+  // ════════════════════════════════════════════════════════════════════════
+  if (phase === 'coding_lab') {
+    if (codings.length === 0) { setPhase(debugs.length ? 'debug_mission' : 'oracle_test'); return null; }
+    const q = codings[codeIdx];
+    const handleCode = (e) => {
+      e.preventDefault();
+      const ans = e.target.elements.code_ans.value.trim();
+      const ok = q.validate ? q.validate(ans) : ans.toLowerCase() === (q.answer || '').toLowerCase();
+      setCodeAttempts(a => a + 1);
+      if (ok) {
+        setCodeResult('correct'); hitEnemy(25); logCombat('💻 CODE EXECUTED! +25 DMG');
+        setTimeout(() => {
+          setCodeResult(null); setCodeAnswer(''); setCodeHintShown(false); setCodeAttempts(0);
+          const next = codeIdx + 1;
+          next < codings.length ? setCodeIdx(next) : setPhase(debugs.length ? 'debug_mission' : oracles.length ? 'oracle_test' : 'results');
+        }, 1400);
+      } else {
+        setCodeResult('wrong');
+        if (codeAttempts >= 1) setCodeHintShown(true);
+        hitPlayer(15); logCombat('⚠️ SYNTAX ERROR! -15 HP');
+        setTimeout(() => setCodeResult(null), 1100);
+      }
+    };
+    return (
+      <CombatLayout phaseName="Coding Lab" phaseIcon={Code2} accentClass="border-blue-400/30 bg-blue-400/10 text-blue-400">
+        <motion.div key={codeIdx} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+          className="bg-black/80 border border-blue-400/20 rounded-2xl p-5 shadow-[0_0_30px_rgba(96,165,250,0.08)]">
+          <div className="flex items-center gap-2 mb-4">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-400/10 border border-blue-400/30 rounded-full text-blue-400 font-black text-[9px] tracking-widest uppercase">
+              <Code2 className="w-3 h-3" />CODING LAB {codeIdx + 1}/{codings.length}
+            </span>
+          </div>
+          <h3 className="text-base font-black mb-1.5 uppercase italic">{q.title}</h3>
+          <p className="text-white/50 text-sm mb-3">🎯 {q.objective}</p>
+          {q.starterCode && <pre className="bg-black/70 border border-white/10 rounded-xl p-3 text-xs font-mono text-brand-neon/70 mb-3 overflow-x-auto">{q.starterCode}</pre>}
+          {codeHintShown && q.hint && (
+            <div className="mb-3 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-xl text-yellow-300 text-xs">💡 Hint: {q.hint}</div>
+          )}
+          {codeResult && (
+            <div className={`mb-3 p-3 rounded-xl text-sm font-black ${codeResult === 'correct' ? 'bg-brand-success/20 text-brand-success' : 'bg-red-500/20 text-red-400'}`}>
+              {codeResult === 'correct' ? '✅ PERFECT!' : '❌ Try again!'}
+            </div>
+          )}
+          <form onSubmit={handleCode} className="flex gap-2">
+            <input name="code_ans" type="text" autoComplete="off" placeholder="Type your answer..." value={codeAnswer} onChange={e => setCodeAnswer(e.target.value)}
+              className="flex-1 bg-black/60 border border-white/10 focus:border-blue-400 rounded-xl px-4 py-2.5 text-white font-mono text-sm outline-none transition-all" />
+            <button type="submit" className="px-5 bg-blue-500 hover:bg-blue-400 text-white font-black text-xs uppercase rounded-xl transition-all active:scale-95">RUN</button>
+          </form>
+        </motion.div>
+      </CombatLayout>
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // 🟠 PHASE 4 — DEBUG MISSION
+  // ════════════════════════════════════════════════════════════════════════
+  if (phase === 'debug_mission') {
+    if (debugs.length === 0) { setPhase(oracles.length ? 'oracle_test' : 'results'); return null; }
+    const q = debugs[debugIdx];
+    const handleDebug = (opt) => {
+      if (debugResult) return;
+      const ok = opt === q.answer;
+      if (ok) {
+        setDebugResult('correct'); hitEnemy(30); logCombat('🐛 BUG ELIMINATED! +30 DMG');
+        setTimeout(() => {
+          setDebugResult(null);
+          const next = debugIdx + 1;
+          next < debugs.length ? setDebugIdx(next) : setPhase(oracles.length ? 'oracle_test' : 'results');
+        }, 1400);
+      } else {
+        setDebugResult('wrong'); hitPlayer(20); logCombat('🚨 PATCH FAILED! -20 HP');
+        setTimeout(() => setDebugResult(null), 1100);
+      }
+    };
+    return (
+      <CombatLayout phaseName="Debug Mission" phaseIcon={Bug} accentClass="border-orange-400/30 bg-orange-400/10 text-orange-400">
+        <motion.div key={debugIdx} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+          className="bg-black/80 border border-orange-400/20 rounded-2xl p-5 shadow-[0_0_30px_rgba(251,146,60,0.08)]">
+          <div className="flex items-center gap-2 mb-4">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-red-500/20 border border-red-500/40 rounded-full text-red-400 font-black text-[9px] tracking-widest uppercase animate-pulse">
+              <Bug className="w-3 h-3" />🚨 DEBUG MISSION {debugIdx + 1}/{debugs.length}
+            </span>
+          </div>
+          <p className="text-white/60 text-sm mb-4">{q.description}</p>
+          {q.brokenCode && (
+            <div className="mb-4">
+              <p className="text-red-400 text-[9px] font-black uppercase tracking-widest mb-2">⚠️ CORRUPTED CODE:</p>
+              <pre className="bg-black/80 border border-red-500/30 rounded-xl p-3 text-xs font-mono overflow-x-auto leading-relaxed">
+                {q.brokenCode.split('\n').map((line, li) => (
+                  <div key={li} className={li === q.bugLine ? 'bg-red-500/20 text-red-300' : 'text-white/70'}>
+                    <span className="text-white/20 select-none mr-3">{li + 1}</span>{line}
+                  </div>
+                ))}
+              </pre>
+            </div>
+          )}
+          {debugResult && (
+            <div className={`mb-3 p-3 rounded-xl text-sm font-black ${debugResult === 'correct' ? 'bg-brand-success/20 text-brand-success' : 'bg-red-500/20 text-red-400'}`}>
+              {debugResult === 'correct' ? '✅ BUG FIXED!' : `❌ Not quite. ${q.hint || ''}`}
+            </div>
+          )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {q.options?.map((opt, i) => (
+              <button key={i} onClick={() => handleDebug(opt)} disabled={!!debugResult}
+                className={`text-left py-3 px-4 rounded-xl border text-xs font-mono transition-all active:scale-95 ${
+                  debugResult === 'correct' && opt === q.answer ? 'bg-brand-success/20 border-brand-success text-brand-success'
+                  : debugResult ? 'opacity-40 border-white/5 text-white/30'
+                  : 'bg-white/5 border-white/10 hover:border-orange-400 hover:bg-orange-400/10 text-white/70'}`}>
+                {opt}
+              </button>
+            ))}
+          </div>
+        </motion.div>
+      </CombatLayout>
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // 🟢 PHASE 5 — ORACLE TEST
+  // ════════════════════════════════════════════════════════════════════════
+  if (phase === 'oracle_test') {
+    if (oracles.length === 0) { setPhase('results'); return null; }
+    const q = oracles[oracleIdx];
+    const handleOracle = (opt) => {
+      if (oracleResult) return;
+      const ok = opt === q.answer;
+      if (ok) { setOracleResult('correct'); hitEnemy(20); logCombat('🔮 PREDICTION ACCURATE! +20 DMG'); }
+      else     { setOracleResult('wrong');   hitPlayer(15); logCombat('🔴 WRONG PREDICTION! -15 HP'); }
+    };
+    const goNext = () => {
+      setOracleResult(null);
+      const next = oracleIdx + 1;
+      next < oracles.length ? setOracleIdx(next) : setPhase('results');
+    };
+    return (
+      <CombatLayout phaseName="Oracle Test" phaseIcon={Eye} accentClass="border-green-400/30 bg-green-400/10 text-green-400">
+        <motion.div key={oracleIdx} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+          className="bg-black/80 border border-green-400/20 rounded-2xl p-5 shadow-[0_0_30px_rgba(74,222,128,0.08)]">
+          <div className="flex items-center gap-2 mb-4">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-green-400/10 border border-green-400/30 rounded-full text-green-400 font-black text-[9px] tracking-widest uppercase">
+              <Eye className="w-3 h-3" />🔮 ORACLE TEST {oracleIdx + 1}/{oracles.length}
+            </span>
+          </div>
+          <p className="text-white/50 text-sm mb-3">Think like a CPU — what does this output?</p>
+          <pre className="bg-black/80 border border-green-400/20 rounded-xl p-4 text-xs font-mono text-green-300/80 mb-5 overflow-x-auto leading-relaxed">{q.code}</pre>
+          {!oracleResult ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {q.options?.map((opt, i) => (
+                <button key={i} onClick={() => handleOracle(opt)}
+                  className="text-left py-3 px-4 rounded-xl border border-white/10 bg-white/5 hover:border-green-400 hover:bg-green-400/10 text-white/70 text-sm font-mono transition-all active:scale-95">
+                  <span className="text-[9px] opacity-30 mr-2">{String.fromCharCode(65+i)}.</span>{opt}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="space-y-3">
+              <div className={`p-4 rounded-2xl border-2 ${oracleResult === 'correct' ? 'bg-brand-success/10 border-brand-success/40 text-brand-success' : 'bg-red-500/10 border-red-500/30 text-red-400'}`}>
+                <p className="font-black text-sm">{oracleResult === 'correct' ? '✅ PERFECT PREDICTION!' : `❌ The answer was: "${q.answer}"`}</p>
+                {q.explanation && <p className="text-white/50 text-xs mt-2">{q.explanation}</p>}
+              </div>
+              <button onClick={goNext} className="w-full py-3.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-xl font-black tracking-widest uppercase text-sm transition-all">
+                {oracleIdx + 1 < oracles.length ? 'NEXT →' : '🏆 COMPLETE'}
+              </button>
+            </motion.div>
+          )}
+        </motion.div>
+      </CombatLayout>
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // 🔴 RESULTS
+  // ════════════════════════════════════════════════════════════════════════
+  if (phase === 'results') {
+    const isWin = playerHp > 0;
+    return (
+      <div className="h-screen flex items-center justify-center bg-black text-white p-6">
+        <div className={`w-full max-w-md border-2 p-10 rounded-[40px] text-center relative overflow-hidden ${isWin ? 'border-brand-success/30 bg-[#001a0d]' : 'border-red-600/30 bg-[#1a0000]'}`}>
+          <div className="text-6xl mb-4">{isWin ? '🏆' : '💀'}</div>
+          <h2 className={`text-5xl font-black uppercase italic tracking-tighter mb-2 ${isWin ? 'text-brand-success' : 'text-red-500'}`}>
+            {isWin ? 'VICTORY' : 'DEFEATED'}
+          </h2>
+          <p className="text-white/30 text-xs font-black tracking-[0.4em] uppercase mb-8">
+            {isWin ? 'Sublevel Cleared!' : 'Combat Terminated'}
+          </p>
+          <div className="grid grid-cols-3 gap-3 mb-8">
+            {[
+              { label: 'MCQ Hits', val: `${mcqCorrect}/${mcqs.length}` },
+              { label: 'HP Left', val: `${Math.max(0, playerHp)}` },
+              { label: 'Enemy', val: enemyHp <= 0 ? '☠️' : `${Math.round(enemyHp)}hp` },
+            ].map((s, i) => (
+              <div key={i} className="p-4 bg-white/5 rounded-2xl border border-white/5">
+                <p className="text-xl font-black">{s.val}</p>
+                <p className="text-[8px] uppercase tracking-widest text-white/30 mt-1">{s.label}</p>
+              </div>
+            ))}
+          </div>
+          {weakAreas.length > 0 && (
+            <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl mb-6 text-left">
+              <p className="text-red-400 text-[8px] font-black uppercase tracking-widest mb-2 flex items-center gap-2"><AlertTriangle className="w-3 h-3"/>Weak Areas</p>
+              <div className="flex flex-wrap gap-1.5">
+                {[...new Set(weakAreas)].map((w, i) => (
+                  <span key={i} className="px-2 py-0.5 bg-red-500/20 text-red-300 text-[8px] rounded-full border border-red-500/30">{w}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          <button onClick={() => isWin ? onComplete() : onBack()}
+            className={`w-full py-4 rounded-2xl font-black text-sm uppercase tracking-widest transition-all ${isWin ? 'bg-brand-success text-black hover:scale-105 shadow-[0_0_30px_rgba(16,185,129,0.3)]' : 'bg-white/10 hover:bg-white/20'}`}>
+            {isWin ? '🚀 CLAIM XP & CONTINUE' : '🔄 RETRY'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
